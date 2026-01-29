@@ -1,1 +1,33 @@
-venv
+
+__pycache__/
+
+
+
+venv/
+.venv
+env/
+
+
+# pyTorch / training 
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# experiments / checkpoints
+runs/
+outputs/
+checkpoints/
+
+# jupyter
+.ipynb_checkpoints/
+
+
+# datasets / extracted frames
+frames/
+
+
+.vscode/
+
+# hugging face / timm cache
+.cache/
