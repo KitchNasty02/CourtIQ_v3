@@ -11,6 +11,9 @@ AI Tennis Tracking System
  - Fine-tuned the backbone to tennis courts using contrastive learning (SimCLR)
  - Train multiple heads. One head each for keypoints, the ball, and the players.
 
+# Training
+Training backbone using SimCLR and NT-Xent Loss:
+![simclr loss graph](train_plot\simclr_training_loss.png)
 
 # Upcoming Features:
  - Court overlay
