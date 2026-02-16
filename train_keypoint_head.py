@@ -4,6 +4,7 @@ from utils.generate_heatmaps import generate_heatmaps_batch
 
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+import torch.amp
 import torch
 import timm
 import json
@@ -12,6 +13,7 @@ import json
 def main():
     # Move to gpu if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    amp_device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on {device}")
 
     # ------- Backbone ------ #
@@ -22,7 +24,7 @@ def main():
         features_only=True
     )
 
-    weights_path = 'weights\mobilevit_simclr_final.pth'
+    weights_path = 'weights/mobilevit_simclr_final.pth'
     weights = torch.load(weights_path, map_location=device)
     backbone.load_state_dict(weights, strict=False)
 
@@ -55,10 +57,10 @@ def main():
 
     loader = DataLoader(
         dataset,
-        batch_size=8,          # keep batch size small
+        batch_size=64,          # keep batch size small
         shuffle=True,
-        num_workers=4,
-        pin_memory=True
+        num_workers=2,
+        # pin_memory=True
     )
 
     # ADAM optimizer
@@ -71,7 +73,8 @@ def main():
     # freeze backbone
     for param in backbone.parameters():
         param.requires_grad = False
-
+  
+    scaler = torch.amp.GradScaler(amp_device)
 
     epochs = 50
     losses = []
@@ -79,32 +82,29 @@ def main():
     for epoch in range(epochs):
         total_loss = 0
 
-        for images, keypoints in loader:
+        for i, (images, keypoints) in enumerate(loader):
+            optimizer.zero_grad()
             images = images.to(device)
             keypoints = keypoints.to(device)
 
-            with torch.no_grad():
+            with torch.amp.autocast(amp_device):
                 features = backbone(images)
-            last_feat = features[-1]
+                last_feat = features[-1]
 
-            pred_heatmaps = head(last_feat)
+                pred_heatmaps = head(last_feat)
 
-            Hm, Wm = pred_heatmaps.shape[-2:]
+                gt_heatmaps = generate_heatmaps_batch(keypoints, *pred_heatmaps.shape[-2:], stride=stride)
+                loss = F.mse_loss(pred_heatmaps, gt_heatmaps)
 
-            gt_heatmaps = generate_heatmaps_batch(
-                keypoints, 
-                Hm,
-                Wm,
-                stride=stride
-            )
 
-            loss = F.mse_loss(pred_heatmaps, gt_heatmaps)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             total_loss += loss.item()
+
+            if i % 50 == 0:
+              print(f"Batch {i}/{len(loader)} | Loss: {loss.item():.4f}")
 
         avg_loss = total_loss / len(loader)
         losses.append(avg_loss)
@@ -134,7 +134,17 @@ def main():
                 weight_decay=1e-4
             )
 
-    with open('losses.json', 'w') as file:
+    # Save final model
+    torch.save(
+        {
+            "backbone": backbone.state_dict(),
+            "head": head.state_dict()
+        },
+        "checkpoints/keypoints_final.pth"
+    )
+
+
+    with open('keypoint_head_losses.json', 'w') as file:
         # save losses to file so I can make graph later
         json.dump(losses, file, indent=4)
 
@@ -142,4 +152,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
