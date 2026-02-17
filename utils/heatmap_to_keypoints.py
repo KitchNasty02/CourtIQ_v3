@@ -1,5 +1,4 @@
 import torch.nn.functional as F
-import torch
 
 def heatmaps_to_keypoints(heatmaps, img_size, stride):
     B, K, H_hm, W_hm = heatmaps.shape

@@ -89,8 +89,9 @@ def validate():
             plt.title("Predicted Keypoints")
 
             # red predicted, green truth
-            for (x, y) in pred_keypoints[0]:
+            for i, (x, y) in enumerate(pred_keypoints[0]):
                 plt.scatter(x, y, c='red', s=40)
+                # plt.text(x + 0.1, y, str(i), fontsize=12) # write keypoint number next to point
 
             for (x, y) in gt_keypoints:
                 plt.scatter(x, y, c='green', s=40)
