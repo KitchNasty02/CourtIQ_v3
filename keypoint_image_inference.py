@@ -27,7 +27,7 @@ def predict_image(img_path=None, output_path=None):
     backbone.to(device)
     
     # Load checkpoint
-    checkpoint = torch.load("weights/finetune_epoch_20.pth", map_location=device)
+    checkpoint = torch.load("weights/keypoints_final.pth", map_location=device)
     
     # Get stride
     with torch.no_grad():
