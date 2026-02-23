@@ -37,7 +37,7 @@ def predict_video(video_source=0, output_path=None):
     backbone.to(device)
     
     # Load checkpoint
-    checkpoint = torch.load("weights/finetune_epoch_20.pth", map_location=device)
+    checkpoint = torch.load("weights/fine_tuning_keypoints_final.pth", map_location=device)
     
     # Get stride
     with torch.no_grad():
@@ -183,18 +183,16 @@ def predict_youtube_video(youtube_url, output_path="output.mp4"):
 
 
 if __name__ == "__main__":
-    # Option 1: Webcam
     # predict_video(video_source=0)
     
-    # Option 2: Video file
-    # youtube_url = "https://www.youtube.com/watch?v=C4Gl-T2dtss"
-    # predict_youtube_video(youtube_url, output_path="output/court_detection_Alcaraz_Novak.mp4")
+    youtube_url = "https://www.youtube.com/watch?v=C4Gl-T2dtss"
+    predict_youtube_video(youtube_url, output_path="output/court_detection_Alcaraz_Novak.mp4")
 
     # youtube_url = "https://www.youtube.com/watch?v=I6b69yvtufI"
     # predict_youtube_video(youtube_url, output_path="output/court_detection_Alcaraz_Paul.mp4")
 
-    youtube_url = "https://www.youtube.com/watch?v=XOR1EuU-08A"
-    predict_youtube_video(youtube_url, output_path="output/court_detection_Federer_Ivashka.mp4")
+    # youtube_url = "https://www.youtube.com/watch?v=XOR1EuU-08A"
+    # predict_youtube_video(youtube_url, output_path="output/court_detection_Federer_Ivashka.mp4")
 
 
 

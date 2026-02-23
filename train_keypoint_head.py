@@ -1,74 +1,14 @@
 from models.keypoint_head import CourtKeypointHead
 from data.keypoint_dataset_augmented import KeypointDatasetWithAugmentation
 from utils.generate_heatmaps import generate_heatmaps_batch
-from utils.heatmap_to_keypoints import heatmaps_to_keypoints
 from plotting.plot_training_metrics import plot_training_metrics
-from utils.calculate_pck import calculate_pck
+from utils.validate import validate
 
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import torch.amp
 import torch
 import timm
-import numpy as np
-
-
-
-def validate(backbone, head, val_loader, device, stride, img_size=(720, 1280)):
-    """
-    Validate model on validation set
-    """
-    backbone.eval()
-    head.eval()
-    
-    total_loss = 0
-    total_pck = 0
-    total_distance = 0
-    num_batches = 0
-    
-    with torch.no_grad():
-        for images, keypoints in val_loader:
-            images = images.to(device)
-            keypoints = keypoints.to(device)
-            
-            # Forward pass
-            features = backbone(images)
-            pred_heatmaps = head(features[-1])
-            
-            # Calculate loss
-            gt_heatmaps = generate_heatmaps_batch(keypoints, *pred_heatmaps.shape[-2:], stride=stride)
-            loss = F.mse_loss(pred_heatmaps, gt_heatmaps)
-            
-            # Convert heatmaps to keypoints for accuracy metrics
-            pred_kps_batch = []
-            for b in range(pred_heatmaps.shape[0]):
-                pred_kps = heatmaps_to_keypoints(
-                    pred_heatmaps[b:b+1], 
-                    img_size, 
-                    stride
-                )
-                pred_kps_batch.append(pred_kps[0])
-            
-            pred_kps_tensor = torch.tensor(pred_kps_batch, device=device)
-            
-            # Calculate PCK
-            pck, avg_distance = calculate_pck(pred_kps_tensor, keypoints, threshold=0.05, img_size=img_size)
-            
-            total_loss += loss.item()
-            total_pck += pck
-            total_distance += avg_distance
-            num_batches += 1
-    
-    backbone.train()
-    head.train()
-    
-    return {
-        'loss': total_loss / num_batches,
-        'pck': total_pck / num_batches,
-        'avg_distance': total_distance / num_batches
-    }
-
-
 
 
 def main():
@@ -85,15 +25,18 @@ def main():
         features_only=True
     )
 
-    weights_path = 'weights/mobilevit_simclr_final.pth'
-    weights = torch.load(weights_path, map_location=device)
-    backbone.load_state_dict(weights, strict=False)
+    # weights_path = '/content/drive/MyDrive/Projects/CourtIQ/weights/mobilevit_simclr_final.pth'
+    # weights = torch.load(weights_path, map_location=device)
+    # backbone.load_state_dict(weights, strict=False)
 
+    # continue training from 50 epoch
+    checkpoint_path = "/content/drive/MyDrive/Projects/CourtIQ/checkpoints/keypoints_epoch_70.pth"
+    checkpoint = torch.load(checkpoint_path, map_location=device)
 
     backbone.to(device)
     backbone.train() # set to training mode
 
-
+    # compute stride
     with torch.no_grad():
         x = torch.zeros(1, 3, 720, 1280).to(device)
         f = backbone(x)[-1]
@@ -109,17 +52,34 @@ def main():
     head.to(device)
     head.train()
 
+    backbone.load_state_dict(checkpoint["backbone"])
+    head.load_state_dict(checkpoint["head"])
+
+    # load metrics from checkpoint
+    if "metrics" in checkpoint:
+        metrics = checkpoint["metrics"]
+        print(f"Loaded metrics from epoch 1-70")
+        print(f"Last PCK: {metrics['val_pck'][-1]:.4f}")
+    else:
+        metrics = {
+            'train_loss': [],
+            'val_loss': [],
+            'val_pck': [],
+            'val_distance': []
+        }
+        print("No previous metrics found, starting fresh")
+
     
     train_dataset = KeypointDatasetWithAugmentation(
-        img_dir="keypoint_data/images",
-        label_file="keypoint_data/data_train.json",
+        img_dir="/content/data/data/images",
+        label_file="/content/data/data/data_train.json",
         augment=True,
         img_size=(720, 1280)
     )
 
     val_dataset = KeypointDatasetWithAugmentation(
-        img_dir="keypoint_data/images",
-        label_file="keypoint_data/data_val.json",
+        img_dir="/content/data/data/images",
+        label_file="/content/data/data/data_val.json",
         augment=False,  # no augmentation
         img_size=(720, 1280)
     )
@@ -133,7 +93,7 @@ def main():
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=64,    
+        batch_size=32,    
         shuffle=False,
         num_workers=2,
     )
@@ -144,7 +104,7 @@ def main():
     # ADAM optimizer
     optimizer = torch.optim.AdamW(
         list(head.parameters()),
-        lr=3e-4,
+        lr=1e-4,      # was 3e-4, lowered since farther in training
         weight_decay=1e-4
     )
 
@@ -154,7 +114,6 @@ def main():
         mode='min',
         factor=0.5,
         patience=5,
-        verbose=True
     )
 
     # freeze backbone
@@ -163,17 +122,19 @@ def main():
   
     scaler = torch.amp.GradScaler(amp_device)
 
-    epochs = 75
-    metrics = {
-        'train_loss': [],
-        'val_loss': [],
-        'val_pck': [],
-        'val_distance': []
-    }
+    start_epoch = 70
+    epochs = 125
 
-    best_pck = 0
+    # metrics = {
+    #     'train_loss': [],
+    #     'val_loss': [],
+    #     'val_pck': [],
+    #     'val_distance': []
+    # }
 
-    for epoch in range(epochs):
+    best_pck = 0.8263  # current best in first 70
+
+    for epoch in range(start_epoch, epochs):
         backbone.train()
         head.train()
         total_train_loss = 0
@@ -204,6 +165,7 @@ def main():
 
         avg_train_loss = total_train_loss / len(train_loader)
 
+        torch.cuda.empty_cache()
 
         # ----- Validation ----- #
         
@@ -234,7 +196,7 @@ def main():
                     "epoch": epoch + 1,
                     "pck": best_pck
                 },
-                "checkpoints/keypoints_best.pth"
+                "/content/drive/MyDrive/Projects/CourtIQ/checkpoints/keypoints_best.pth"
             )
             print(f"New best model PCK: {best_pck:.4f}")
 
@@ -246,34 +208,33 @@ def main():
                     "epoch": epoch + 1,
                     "metrics": metrics
                 },
-                f"checkpoints/keypoints_epoch_{epoch+1}.pth"
+                f"/content/drive/MyDrive/Projects/CourtIQ/checkpoints/keypoints_epoch_{epoch+1}.pth"
             )
 
-            plot_training_metrics(metrics, save_path=f"images/metrics_epoch_{epoch+1}.png")
+            plot_training_metrics(metrics, save_path=f"/content/drive/MyDrive/Projects/CourtIQ/images/metrics_epoch_{epoch+1}.png")
 
-        # after 50 epoch, switch to fine tuning
-        if (epoch + 1) == 50:
-            print('\nSwitching to Fine Tuning \n')
-            # unfreeze backbone
-            for param in backbone.parameters():
-                param.requires_grad = True
-            backbone.train()
+        # # after 100 epoch, switch to fine tuning
+        # if (epoch + 1) == 100:
+        #     print('\nSwitching to Fine Tuning \n')
+        #     # unfreeze backbone
+        #     for param in backbone.parameters():
+        #         param.requires_grad = True
+        #     backbone.train()
 
-            # update optimizer to include backbone
-            optimizer = torch.optim.AdamW(
-                list(backbone.parameters()) + list(head.parameters()),
-                lr=1e-4,  # smaller LR for fine-tuning
-                weight_decay=1e-4
-            )
+        #     # update optimizer to include backbone
+        #     optimizer = torch.optim.AdamW(
+        #         list(backbone.parameters()) + list(head.parameters()),
+        #         lr=1e-4,  # smaller LR for fine-tuning
+        #         weight_decay=1e-4
+        #     )
 
-            # create scheduler for new optimizer
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode='min',
-                factor=0.5,
-                patience=5,
-                verbose=True
-            )
+        #     # create scheduler for new optimizer
+        #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #         optimizer,
+        #         mode='min',
+        #         factor=0.5,
+        #         patience=5,
+        #     )
 
     # Save final model
     torch.save(
@@ -282,7 +243,7 @@ def main():
             "head": head.state_dict(),
             "metrics": metrics
         },
-        "checkpoints/keypoints_final.pth"
+        "/content/drive/MyDrive/Projects/CourtIQ/checkpoints/keypoints_final.pth"
     )
 
     print(f"Training Complete:")
@@ -290,7 +251,7 @@ def main():
     print(f"Final Validation PCK: {metrics['val_pck'][-1]:.4f}")
     print(f"Final Avg Distance: {metrics['val_distance'][-1]:.2f} pixels")
 
-    plot_training_metrics(metrics, save_path='images/keypoint_metrics_final.png')
+    plot_training_metrics(metrics, save_path='/content/drive/MyDrive/Projects/CourtIQ/images/keypoint_metrics_final.png')
 
 
 

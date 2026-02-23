@@ -1,128 +1,182 @@
-import matplotlib.pyplot as plt
+import json
+import os
+import cv2
+import torch
 import numpy as np
-from data.keypoint_dataset_augmented import KeypointDatasetWithAugmentation
+from torch.utils.data import Dataset
+import albumentations as A
 
-def visualize_augmentations(dataset, num_samples=6, samples_per_image=3):
-    """
-    Visualize original and augmented versions of images with keypoints
-    
-    Args:
-        dataset: CourtKeypointDatasetWithAugmentation instance
-        num_samples: Number of original images to show
-        samples_per_image: How many augmented versions per image
-    """
-    fig = plt.figure(figsize=(20, 4 * num_samples))
-    
-    for img_idx in range(num_samples):
-        # Get original (no augmentation)
-        dataset.augment = False
-        img_orig, kp_orig = dataset[img_idx]
-        
-        # Show original
-        ax = plt.subplot(num_samples, samples_per_image + 1, 
-                        img_idx * (samples_per_image + 1) + 1)
-        plot_image_with_keypoints(img_orig, kp_orig, ax, "Original")
-        
-        # Show augmented versions
-        dataset.augment = True
-        for aug_idx in range(samples_per_image):
-            img_aug, kp_aug = dataset[img_idx]
-            
-            ax = plt.subplot(num_samples, samples_per_image + 1,
-                           img_idx * (samples_per_image + 1) + aug_idx + 2)
-            plot_image_with_keypoints(img_aug, kp_aug, ax, 
-                                     f"Augmented {aug_idx + 1}")
-    
-    plt.tight_layout()
-    plt.savefig('augmentation_validation.png', dpi=150, bbox_inches='tight')
-    plt.show()
-    print("Saved visualization to 'augmentation_validation.png'")
+class KeypointDatasetWithAugmentation(Dataset):
+    def __init__(self, img_dir, label_file, augment=True, img_size=(720, 1280)):
+        self.img_dir = img_dir
+        self.img_size = img_size
+        self.augment = augment
 
+        with open(label_file) as f:
+            self.labels = json.load(f)
 
-def plot_image_with_keypoints(img_tensor, keypoints, ax, title):
-    """Plot image with keypoints - clamp only for display"""
-    img_np = img_tensor.permute(1, 2, 0).numpy()
-    h, w = img_np.shape[:2]
-    
-    ax.imshow(img_np)
-    ax.set_title(title, fontsize=9, fontweight='bold')
-    ax.axis('off')
-    
-    kp_np = keypoints.numpy()
-    colors = plt.cm.tab20(np.linspace(0, 1, len(kp_np)))
-    
-    for i, (x, y) in enumerate(kp_np):
-        # Check if in bounds for display
-        if 0 <= x < w and 0 <= y < h:
-            # Draw keypoint
-            ax.plot(x, y, 'o', color=colors[i], markersize=8, 
-                   markeredgecolor='white', markeredgewidth=2)
-            ax.text(x + 6, y - 6, str(i), color='white', fontsize=8,
-                   fontweight='bold',
-                   bbox=dict(boxstyle='round,pad=0.3', facecolor=colors[i], 
-                            edgecolor='white', linewidth=1.5, alpha=0.9))
+        if augment:
+            self.transform = self.get_augmentation_pipeline()
         else:
-            # Draw indicator at edge showing direction
-            # Clamp for display only
-            x_clamped = np.clip(x, 0, w - 1)
-            y_clamped = np.clip(y, 0, h - 1)
+            self.transform = A.Compose([
+                A.NoOp()
+            ], keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
+
+
+    def get_augmentation_pipeline(self):
+        """
+        Create an augmentation pipeline with perspective transforms.
+        Simulates different camera angles/heights.
+        """
+        return A.Compose([
+            # main augmentation of different camera angles
+            A.OneOf([
+                # really low angles
+                A.Perspective(
+                    scale=(0.3, 0.45),  # (0.15, 0.3)
+                    keep_size=True,
+                    p=1.0
+                ),
+
+                # medium angles
+                A.Perspective(
+                    scale=(0.1, 0.3),   # (0.05, 0.15)
+                    keep_size=True,
+                    p=1.0
+                ),
+
+                # side angle
+                A.Affine(
+                    translate_percent={'x': (-0.2, 0.2), 'y': (-0.1, 0.1)},
+                    scale=(0.8, 1.1),
+                    rotate=(-15, 15),
+                    shear={'x': (-10, 10), 'y': (-5, 5)},
+                    p=1.0
+                )
+            ], p=0.8),     # 80% chance to add these augments
+
+            # rotation/zoom
+            A.OneOf([
+                # small rotation
+                A.Rotate(
+                    limit=(-10, 10),
+                    border_mode=cv2.BORDER_CONSTANT,
+                    p=1.0
+                ),
+                # zoom
+                A.RandomScale(
+                    scale_limit=(-0.1, 0.1),     # (-0.2, 0.2)
+                    p=1.0
+                ),
+            ], p=0.4),
+
+            # color/lighting
+            A.OneOf([
+                A.RandomBrightnessContrast(
+                    brightness_limit=0.3,
+                    contrast_limit=0.3,
+                    p=1.0
+                ),
+                A.HueSaturationValue(
+                    hue_shift_limit=10,
+                    sat_shift_limit=20,
+                    val_shift_limit=20,
+                    p=1.0
+                ),
+                A.ColorJitter(
+                    brightness=0.3,
+                    contrast=0.3,
+                    saturation=0.3,
+                    hue=0.1,
+                    p=1.0
+                ),
+            ], p=0.6),
+
+            # simulate different lighting
+            A.OneOf([
+                A.RandomGamma(gamma_limit=(70, 130), p=1.0),
+                A.RandomToneCurve(scale=0.3, p=1.0),
+            ], p=0.3),
+
+            # simulate camera blur
+            A.OneOf([
+                A.GaussianBlur(blur_limit=(3, 7), p=1.0),
+                A.MotionBlur(blur_limit=7, p=1.0),
+                A.MedianBlur(blur_limit=5, p=1.0),
+            ], p=0.25),
+
+            # different image qualities
+            A.OneOf([
+                A.GaussNoise(std_range=(0.2, 0.5), p=1.0),
+                A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5), p=1.0),
+            ], p=0.2),
+
+            # simulate shadows
+            A.RandomShadow(
+                shadow_roi=(0, 0.3, 1, 1),
+                num_shadows_limit=(1, 2),
+                shadow_dimension=5,
+                p=0.2
+            ),
+
+        ], keypoint_params=A.KeypointParams(format='xy', remove_invisible=False)     # keep keypoints even if off-screen
+        
+        )
+
+
+    def __len__(self):
+        return len(self.labels)
+    
+
+    def __getitem__(self, idx):
+        item = self.labels[idx]
+
+        img_path = os.path.join(self.img_dir, item["id"] + ".png")
+        img = cv2.imread(img_path)
+
+        # flip vertically for augments (makes sure low/high angles are correct)
+        img = cv2.flip(img, 0)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w = img.shape[:2]
+
+        keypoints_np = np.array(item["kps"])  # (14, 2)
+
+        # flip keypoints
+        keypoints_np[:, 1] = h - keypoints_np[:, 1]
+        keypoints_list = keypoints_np.tolist()
+
+        # apply augmentation
+        if self.augment:
+            transformed = self.transform(image=img, keypoints=keypoints_list)
+            img = transformed['image']
+            keypoints_list = transformed['keypoints']
+
+        # flip back after augments
+        img = cv2.flip(img, 0)
+        keypoints_array = np.array(keypoints_list)
+        keypoints_array[:, 1] = img.shape[0] - keypoints_array[:, 1]
+
+        # ensure right image size
+        target_h, target_w = self.img_size  # (720, 1280)
+        current_h, current_w = img.shape[:2]
+
+        if current_h != target_h or current_w != target_w:
+            # Resize image
+            img = cv2.resize(img, (target_w, target_h))
             
-            # Draw with different style (hollow circle) to show it's off-screen
-            ax.plot(x_clamped, y_clamped, 'o', color=colors[i], markersize=8,
-                   markerfacecolor='none', markeredgecolor=colors[i], 
-                   markeredgewidth=3, alpha=0.5)
-            
-            # Add arrow pointing in direction of true location
-            dx = np.clip(x - x_clamped, -20, 20)
-            dy = np.clip(y - y_clamped, -20, 20)
-            if abs(dx) > 1 or abs(dy) > 1:
-                ax.arrow(x_clamped, y_clamped, dx, dy, 
-                        head_width=8, head_length=8, 
-                        fc=colors[i], ec=colors[i], alpha=0.5)
-            
-            ax.text(x_clamped + 6, y_clamped - 6, f"{i}*", 
-                   color='yellow', fontsize=8, fontweight='bold',
-                   bbox=dict(boxstyle='round,pad=0.3', 
-                            facecolor=colors[i], alpha=0.7))
+            # Scale keypoints accordingly
+            scale_x = target_w / current_w
+            scale_y = target_h / current_h
+            keypoints_array[:, 0] *= scale_x
+            keypoints_array[:, 1] *= scale_y
+        
+        # back to tensor
+        img_tensor = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+        
+        keypoints_tensor = torch.from_numpy(keypoints_array).float()
 
+        return img_tensor, keypoints_tensor
+    
 
-def test_augmentation_single_image(dataset, idx=0, num_augmentations=9):
-    """
-    Show one image with multiple augmentation variations
-    """
-    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
-    axes = axes.flatten()
-    
-    dataset.augment = True
-    
-    for i in range(num_augmentations):
-        img, kp = dataset[idx]
-        plot_image_with_keypoints(img, kp, axes[i], f"Augmentation {i+1}")
-    
-    plt.tight_layout()
-    plt.savefig(f'single_image_augmentations_{idx}.png', dpi=150, bbox_inches='tight')
-    plt.show()
-    print(f"Saved to 'single_image_augmentations_{idx}.png'")
-
-
-
-
-if __name__ == "__main__":
-    # Create augmented dataset
-    dataset = KeypointDatasetWithAugmentation(
-        img_dir="keypoint_data/images",
-        label_file="keypoint_data/data_train.json",
-        augment=True
-    )
-    
-    print("Dataset created with augmentation")
-    print(f"Total samples: {len(dataset)}")
-    
-    print("\nGenerating augmentation comparison grid...")
-    visualize_augmentations(dataset, num_samples=4, samples_per_image=3)
-    
-    print("\nGenerating single image variations...")
-    test_augmentation_single_image(dataset, idx=0, num_augmentations=9)
-    
 
 

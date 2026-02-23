@@ -27,7 +27,7 @@ def predict_image(img_path=None, output_path=None):
     backbone.to(device)
     
     # Load checkpoint
-    checkpoint = torch.load("weights/keypoints_final.pth", map_location=device)
+    checkpoint = torch.load("weights/fine_tuning_keypoints_final.pth", map_location=device)
     
     # Get stride
     with torch.no_grad():
@@ -116,6 +116,7 @@ def draw_court_lines(img, keypoints, scale_x, scale_y):
 
 
 if __name__ == "__main__":
-    img_path = r"keypoint_data\images\_7UfL2egoN0_700.png"
+    # img_path = r"keypoint_data\images\_7UfL2egoN0_700.png"
+    img_path = r"frames\theim_image.png"
     predict_image(img_path)
 
