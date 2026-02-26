@@ -12,9 +12,14 @@ AI Tennis Tracking System
  - Train multiple heads. One head each for keypoints, the ball, and the players.
 
 # Training
-Training backbone using SimCLR and NT-Xent Loss:   
+Fine-tuning backbone using SimCLR and NT-Xent Loss:   
+<img src="plotting/simclr_training_loss.png" alt="backbone training loss" height="400">
 
-![simclr loss graph](./train_plot/simclr_training_loss.png)
+Training custom keypoint head (backbone frozen):  
+<img src="images/keypoint_training_metrics_125_epochs.png" alt="keypoint head training loss" height="400">
+
+Inference on Image (green is truth, red is prediction):  
+<img src="images/keypoint_inference_validation.png" alt="keypoint inference" height="400">
 
 # Upcoming Features:
  - Court overlay
