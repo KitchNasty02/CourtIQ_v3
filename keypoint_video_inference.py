@@ -227,7 +227,7 @@ def predict_youtube_video(youtube_url, output_path="output.mp4"):
 
 
 if __name__ == "__main__":
-    # predict_video(video_source=0)
+    # predict_video(video_source=0, output_path="output/live_video_detection")
     
     # youtube_url = "https://www.youtube.com/watch?v=C4Gl-T2dtss"
     # predict_youtube_video(youtube_url, output_path="output/court_detection_Alcaraz_Novak.mp4")
